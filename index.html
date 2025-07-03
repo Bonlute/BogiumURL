@@ -4,17 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>BogiumURL</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <style>
     :root {
       --highlight: #007bff;
       --blur-light: rgba(255, 255, 255, 0.2);
       --blur-dark: rgba(0, 0, 0, 0.4);
 
-      /* Themes */
       --bg-light: linear-gradient(120deg, #e0eafc, #cfdef3);
       --bg-dark: linear-gradient(120deg, #1c1c1c, #2b2b2b);
       --bg-ocean: linear-gradient(135deg, #2e3192, #1bffff);
       --bg-solarized: linear-gradient(135deg, #002b36, #073642);
+      --bg-pastel: linear-gradient(120deg, #fbc2eb, #a6c1ee);
+      --bg-terminal: linear-gradient(120deg, #000000, #333333);
     }
 
     * { box-sizing: border-box; }
@@ -31,33 +33,23 @@
       transition: background 0.5s, color 0.5s;
     }
 
-    body.dark {
-      background: var(--bg-dark);
-      color: #eee;
-    }
-    body.ocean {
-      background: var(--bg-ocean);
-      color: #fff;
-    }
-    body.solarized {
-      background: var(--bg-solarized);
-      color: #b58900;
-    }
+    body.dark { background: var(--bg-dark); color: #eee; }
+    body.ocean { background: var(--bg-ocean); color: #fff; }
+    body.solarized { background: var(--bg-solarized); color: #b58900; }
+    body.pastel { background: var(--bg-pastel); color: #333; }
+    body.terminal { background: var(--bg-terminal); color: #0f0; font-family: monospace; }
 
     .browser {
       background: var(--blur-light);
       backdrop-filter: blur(20px);
       padding: 28px;
       border-radius: 18px;
-      max-width: 600px;
+      max-width: 700px;
       width: 95%;
       box-shadow: 0 0 40px rgba(0,0,0,0.3);
-      transition: background 0.3s;
     }
-
-    body.dark .browser {
-      background: var(--blur-dark);
-    }
+    body.dark .browser,
+    body.terminal .browser { background: var(--blur-dark); }
 
     input[type="text"] {
       width: 100%;
@@ -86,7 +78,6 @@
       cursor: pointer;
       color: white;
       background: var(--highlight);
-      transition: background 0.3s;
     }
 
     .icon-only {
@@ -106,12 +97,11 @@
     .suggestions div, .footer div {
       cursor: pointer;
       margin-top: 5px;
+      display: flex;
+      align-items: center;
     }
 
-    .suggestions div:hover,
-    .footer div:hover {
-      text-decoration: underline;
-    }
+    .suggestions div:hover, .footer div:hover { text-decoration: underline; }
 
     .listening::after {
       content: "";
@@ -144,8 +134,10 @@
       <button class="icon-only" onclick="refresh()">🔄</button>
       <button class="icon-only" onclick="bookmark()">⭐</button>
       <button class="icon-only" onclick="cycleTheme()">🎨</button>
+      <button class="icon-only" onclick="shareQR()">📱</button>
     </div>
 
+    <iframe id="miniView" style="display:none; width:100%; height:400px; border:none; margin-top:20px;"></iframe>
     <div class="suggestions" id="historyList"></div>
     <div class="footer" id="bookmarkList"></div>
   </div>
@@ -159,31 +151,23 @@
       const raw = input.value.trim();
       if (!raw) return;
       let url = raw;
-
       if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(url)) {
-        url = (url.includes(".") || url.includes(":"))
-          ? "https://" + url
-          : "https://duckduckgo.com/?q=" + encodeURIComponent(url);
+        url = (url.includes(".") || url.includes(":")) ? "https://" + url : "https://duckduckgo.com/?q=" + encodeURIComponent(url);
       }
-
       saveHistory(url);
-      window.open(url, "_blank");
+      document.getElementById("miniView").src = url;
+      document.getElementById("miniView").style.display = "block";
     }
 
-    function refresh() {
-      location.reload();
-    }
-
-    function toggleTheme() {
-      document.body.classList.toggle("dark");
-    }
+    function refresh() { location.reload(); }
 
     function cycleTheme() {
-      const themes = ["light", "dark", "ocean", "solarized"];
+      const themes = ["light", "dark", "ocean", "solarized", "pastel", "terminal"];
       let current = themes.find(t => document.body.classList.contains(t)) || "light";
       document.body.classList.remove(...themes);
       let next = themes[(themes.indexOf(current) + 1) % themes.length];
       if (next !== "light") document.body.classList.add(next);
+      localStorage.setItem("theme", next);
     }
 
     function bookmark() {
@@ -205,10 +189,7 @@
       bookmarks.forEach(b => {
         const el = document.createElement("div");
         el.textContent = b;
-        el.onclick = () => {
-          input.value = b;
-          go();
-        };
+        el.onclick = () => { input.value = b; go(); };
         container.appendChild(el);
       });
     }
@@ -230,7 +211,16 @@
 
       [...new Set([...urls, ...bookmarks])].forEach(url => {
         const el = document.createElement("div");
-        el.textContent = url;
+        const img = document.createElement("img");
+        try {
+          const domain = new URL(url).origin;
+          img.src = `https://www.google.com/s2/favicons?domain=${domain}`;
+        } catch {}
+        img.style.width = "16px";
+        img.style.height = "16px";
+        img.style.marginRight = "6px";
+        el.appendChild(img);
+        el.appendChild(document.createTextNode(url));
         el.onclick = () => input.value = url;
         historyList.appendChild(el);
 
@@ -241,64 +231,57 @@
     }
 
     function speak() {
-      if (!('webkitSpeechRecognition' in window)) {
-        alert("Voice not supported.");
-        return;
-      }
-
+      if (!('webkitSpeechRecognition' in window)) return alert("Voice not supported.");
       const rec = new webkitSpeechRecognition();
       rec.lang = "en-US";
-
       const micBtn = document.querySelector('[onclick="speak()"]');
-      rec.onstart = () => {
-        input.classList.add("listening");
-        micBtn.style.background = "#0056b3";
-      };
-      rec.onend = rec.onerror = () => {
-        input.classList.remove("listening");
-        micBtn.style.background = "";
-      };
-
-      rec.onresult = (e) => {
+      rec.onstart = () => { input.classList.add("listening"); micBtn.style.background = "#0056b3"; };
+      rec.onend = rec.onerror = () => { input.classList.remove("listening"); micBtn.style.background = ""; };
+      rec.onresult = e => {
         let said = e.results[0][0].transcript.toLowerCase().trim();
-
         if (said.startsWith("search for ")) {
-          let query = said.replace("search for ", "").trim();
-          input.value = "https://duckduckgo.com/?q=" + encodeURIComponent(query);
-          go();
-        } else if (said.startsWith("go to ") || said.startsWith("open ")) {
-          let url = said.replace(/^(go to|open)/, "").trim()
-                        .replace(/\s+/g, '').replace(/dot/g, '.').replace(/slash/g, '/').replace(/colon/g, ':');
-          if (!/^https?:\/\//.test(url)) url = "https://" + url;
-          input.value = url;
-          go();
-        } else if (["refresh", "reload"].includes(said)) {
-          refresh();
-        } else if (["go back", "back"].includes(said)) {
-          history.back();
-        } else if (["bookmark this", "add bookmark"].includes(said)) {
-          bookmark();
-        } else if (["dark mode"].includes(said)) {
-          document.body.classList.remove("ocean", "solarized");
-          document.body.classList.add("dark");
-        } else if (["light mode"].includes(said)) {
-          document.body.classList.remove("dark", "ocean", "solarized");
-        } else if (["ocean theme"].includes(said)) {
-          document.body.classList.remove("dark", "solarized");
-          document.body.classList.add("ocean");
-        } else if (["solarized theme"].includes(said)) {
-          document.body.classList.remove("dark", "ocean");
-          document.body.classList.add("solarized");
+          input.value = "https://duckduckgo.com/?q=" + encodeURIComponent(said.replace("search for ", ""));
+        } else if (/^(go to|open)/.test(said)) {
+          let url = said.replace(/^(go to|open)/, "").trim().replace(/\s+/g, '').replace(/dot/g, '.').replace(/slash/g, '/').replace(/colon/g, ':');
+          input.value = /^https?:\/\//.test(url) ? url : "https://" + url;
         } else {
           input.value = "https://duckduckgo.com/?q=" + encodeURIComponent(said);
-          go();
         }
+        go();
       };
-
       rec.start();
     }
 
+    function shareQR() {
+      const url = input.value.trim();
+      if (!url) return;
+      const qrContainer = document.createElement("div");
+      qrContainer.style.position = "fixed";
+      qrContainer.style.top = "50%";
+      qrContainer.style.left = "50%";
+      qrContainer.style.transform = "translate(-50%, -50%)";
+      qrContainer.style.background = "#fff";
+      qrContainer.style.padding = "20px";
+      qrContainer.style.borderRadius = "12px";
+      qrContainer.style.boxShadow = "0 0 20px rgba(0,0,0,0.5)";
+      qrContainer.onclick = () => document.body.removeChild(qrContainer);
+      QRCode.toDataURL(url, { width: 200 }, (err, src) => {
+        if (!err) {
+          const img = new Image();
+          img.src = src;
+          qrContainer.appendChild(img);
+          document.body.appendChild(qrContainer);
+        }
+      });
+    }
+
+    function applyStoredTheme() {
+      const stored = localStorage.getItem("theme");
+      if (stored) document.body.classList.add(stored);
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
+      applyStoredTheme();
       updateHistory();
       updateBookmarks();
     });
